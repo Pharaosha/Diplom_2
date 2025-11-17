@@ -1,21 +1,30 @@
 import io.qameta.allure.Step;
 import io.restassured.response.Response;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import com.github.javafaker.Faker;
+import org.junit.jupiter.api.*;
 
 import static org.hamcrest.Matchers.equalTo;
 
 public class LoginTests {
 
-    private static String accessToken;
-    private static final UserApi userApi = new UserApi();
-    private static final Faker faker = new Faker();
+    private String accessToken;
+    private UserData testUser;
 
-    @AfterAll
-    @DisplayName("Удаление пользователя после тестов")
-    public static void tearDown() {
+    private final UserApi userApi = new UserApi();
+
+    @BeforeEach
+    public void setUp() {
+        testUser = UserApi.generateRandomUser();
+        Response createResponse = userApi.createNewUser(testUser);
+        createResponse.then()
+                .statusCode(200)
+                .body("success", equalTo(true));
+        Response loginResponse = userApi.loginUser(testUser);
+        accessToken = userApi.extractAccessToken(loginResponse);
+    }
+
+    @AfterEach
+    @DisplayName("Удаление созданного пользователя после теста")
+    public void tearDown() {
         if (accessToken != null && !accessToken.isEmpty()) {
             userApi.deleteUser(accessToken);
             accessToken = null;
@@ -23,29 +32,24 @@ public class LoginTests {
     }
 
     @Test
-    @DisplayName("Создание уникального пользователя и логин")
-    public void createUserAndLogin() {
+    @DisplayName("Успешный логин с корректными данными")
+    public void loginSuccessfully() {
 
-        String email = faker.internet().emailAddress();
-        UserData userData = new UserData(email, "12345678", "Rengoku");
-
-        Response createResponse = userApi.createNewUser(userData);
-        createResponse.then()
-                .statusCode(200)
-                .body("success", equalTo(true));
-
-        Response loginResponse = userApi.loginUser(userData);
-        checkUserLoginSuccessfully(loginResponse, userData);
-
-        accessToken = userApi.extractAccessToken(loginResponse);
+        Response loginResponse = userApi.loginUser(testUser);
+        checkUserLoginSuccessfully(loginResponse, testUser);
     }
 
     @Test
     @DisplayName("Логин с неверным паролем — ошибка 401")
     public void loginWithInvalidPassword() {
 
-        UserData userWithWrongPassword = new UserData("correct@example.com", "wrongPassword", "");
-        Response response = userApi.loginUser(userWithWrongPassword);
+        UserData wrongPasswordUser = new UserData(
+                testUser.getEmail(),
+                "incorrectPasswordValue123",
+                testUser.getName()
+        );
+
+        Response response = userApi.loginUser(wrongPasswordUser);
         checkLoginFailed(response, "email or password are incorrect");
     }
 
@@ -53,13 +57,19 @@ public class LoginTests {
     @DisplayName("Логин с неверным email — ошибка 401")
     public void loginWithInvalidEmail() {
 
-        UserData userWithWrongEmail = new UserData("wrong@example.com", "correctPassword", "");
-        Response response = userApi.loginUser(userWithWrongEmail);
+        UserData wrongEmailUser = new UserData(
+                "totally.wrong.email@example.com",
+                testUser.getPassword(),
+                testUser.getName()
+        );
+
+        Response response = userApi.loginUser(wrongEmailUser);
         checkLoginFailed(response, "email or password are incorrect");
     }
 
     @Step("Проверить, что пользователь успешно залогинен")
     public void checkUserLoginSuccessfully(Response loginResponse, UserData userData) {
+
         loginResponse.then()
                 .statusCode(200)
                 .body("success", equalTo(true))
@@ -69,6 +79,7 @@ public class LoginTests {
 
     @Step("Проверить, что логин неуспешен (status code = 401)")
     public void checkLoginFailed(Response response, String expectedMessage) {
+
         response.then()
                 .statusCode(401)
                 .body("success", equalTo(false))

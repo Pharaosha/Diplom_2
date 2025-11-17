@@ -1,15 +1,19 @@
 import io.qameta.allure.Step;
 import io.restassured.RestAssured;
 import io.restassured.response.Response;
+import com.github.javafaker.Faker;
 
 import static io.restassured.RestAssured.given;
 
 public class UserApi extends BaseApi {
 
     private static final String BASE_URI = "https://stellarburgers.education-services.ru/";
+    private static Faker faker;
+    
 
     static {
         RestAssured.baseURI = BASE_URI;
+        faker = new Faker();
     }
 
     @Step("Создать нового пользователя")
@@ -18,6 +22,14 @@ public class UserApi extends BaseApi {
                 .header("Content-type", "application/json")
                 .body(userData)
                 .post("/api/auth/register");
+    }
+
+    @Step("Создать рандомные юзерские параметры")
+    public static UserData generateRandomUser() {
+        String email = faker.internet().emailAddress();
+        String password = faker.internet().password(8, 12);
+        String name = faker.name().firstName();
+        return new UserData(email, password, name);
     }
 
     @Step("Логин пользователя")
