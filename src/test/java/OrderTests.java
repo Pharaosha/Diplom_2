@@ -1,5 +1,4 @@
 import io.qameta.allure.Step;
-import io.restassured.RestAssured;
 import io.restassured.response.Response;
 import org.junit.jupiter.api.*;
 
@@ -9,134 +8,66 @@ import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.notNullValue;
 
-
 public class OrderTests {
 
-    private static String accessToken;
+    private String accessToken;
+    private UserData testUser;
 
     private static final List<String> VALID_INGREDIENT_IDS =
             Arrays.asList("61c0c5a71d1f82001bdaaa6d", "61c0c5a71d1f82001bdaaa6f");
     private static final List<String> INVALID_INGREDIENT_IDS =
             Collections.singletonList("invalid_hash_1234567890");
 
+    private final UserApi userApi = new UserApi();
 
     @BeforeEach
-    public void setUp() {
-        RestAssured.baseURI = "https://stellarburgers.education-services.ru/";
+    @DisplayName("Создание нового пользователя перед тестом")
+    public void setUpUser() {
+        testUser = new UserData("evgenpharaosha@gmail.com", "12345678", "Rengoku");
+
+        Response registerResponse = userApi.createNewUser(testUser);
+        registerResponse.then().statusCode(200).body("success", equalTo(true));
+
+        Response loginResponse = userApi.loginUser(testUser);
+        accessToken = userApi.extractAccessToken(loginResponse);
     }
 
-    @AfterAll
-    @DisplayName("Удаление пользователя после тестов")
-    public static void tearDown() {
+    @AfterEach
+    @DisplayName("Удаление пользователя после теста")
+    public void tearDownUser() {
         if (accessToken != null && !accessToken.isEmpty()) {
-            deleteUser(accessToken);
+            userApi.deleteUser(accessToken);
             accessToken = null;
         }
-
     }
 
     @Test
     @DisplayName("Создание заказа с авторизацией и валидными ингредиентами")
     public void createOrderWithAuth() {
-        UserData userData = new UserData("evgenpharaosha@gmail.com", "12345678", "Rengoku");
-
-        Response registerResponse = createNewUser(userData);
-        registerResponse.then().statusCode(200).body("success", equalTo(true));
-
-        Response loginResponse = loginUser(userData);
-        accessToken = extractAccessToken(loginResponse);
-
-        Response orderResponse = makeOrderWithAuth(accessToken, VALID_INGREDIENT_IDS);
+        OrderRequest orderRequest = new OrderRequest(VALID_INGREDIENT_IDS);
+        Response orderResponse = makeOrderWithAuth(accessToken, orderRequest);
         orderResponse.then()
                 .statusCode(200)
                 .body("success", equalTo(true))
                 .body("order.number", notNullValue());
-    }
-
-    @Step("Отправить POST-запрос на создание пользователя (endpoint: /api/auth/register)")
-    public Response createNewUser(UserData userData) {
-        return given()
-                .header("Content-type", "application/json")
-                .body(userData)
-                .when()
-                .post("/api/auth/register");
-    }
-
-    @Step("Отправить POST-запрос на логин пользователя (endpoint: /api/auth/login)")
-    public Response loginUser(UserData userData) {
-        return given()
-                .header("Content-type", "application/json")
-                .body(userData)
-                .when()
-                .post("/api/auth/login");
-    }
-
-    @Step("Извлечь accessToken из ответа")
-    public String extractAccessToken(Response response) {
-        String token = response.then().extract().path("accessToken");
-        return token != null ? token.replace("Bearer ", "") : null;
-    }
-
-    @Step("Удалить пользователя по accessToken (endpoint: /api/auth/user)")
-    public static void deleteUser(String accessToken) {
-        Response response = given()
-                .header("Authorization", "Bearer " + accessToken)
-                .when()
-                .delete("/api/auth/user");
-
-        if (response.statusCode() != 202) {
-            System.out.println("Ошибка при удалении пользователя:");
-            response.prettyPrint();
-        }
-
-        response.then().assertThat().statusCode(202);
-
-
-    }
-
-    @Step("Создание заказа с авторизацией (POST /api/orders)")
-    public Response makeOrderWithAuth(String token, List<String> ingredientIds) {
-
-        Map<String, Object> body = new HashMap<>();
-        body.put("ingredients", ingredientIds);
-
-        return given()
-                .header("Authorization", "Bearer " + token)
-                .header("Content-type", "application/json")
-                .body(body)
-                .when()
-                .post("/api/orders");
     }
 
     @Test
     @DisplayName("Создание заказа без авторизации")
     public void createOrderWithoutAuth() {
-
-        Response orderResponse = makeOrderWithoutAuth(VALID_INGREDIENT_IDS);
+        OrderRequest orderRequest = new OrderRequest(VALID_INGREDIENT_IDS);
+        Response orderResponse = makeOrderWithoutAuth(orderRequest);
         orderResponse.then()
                 .statusCode(200)
                 .body("success", equalTo(true))
                 .body("order.number", notNullValue());
-
-
-    }
-
-    @Step("Создание заказа без авторизации (POST /api/orders)")
-    public Response makeOrderWithoutAuth(List<String> ingredientIds) {
-        Map<String, Object> body = new HashMap<>();
-        body.put("ingredients", ingredientIds);
-
-        return given()
-                .header("Content-type", "application/json")
-                .body(body)
-                .when()
-                .post("/api/orders");
     }
 
     @Test
     @DisplayName("Создание заказа с невалидными ингредиентами")
     public void createOrderWithInvalidIngredients() {
-        Response orderResponse = makeOrderWithAuth(accessToken, INVALID_INGREDIENT_IDS);
+        OrderRequest orderRequest = new OrderRequest(INVALID_INGREDIENT_IDS);
+        Response orderResponse = makeOrderWithAuth(accessToken, orderRequest);
         orderResponse.then()
                 .statusCode(500);
         System.out.println(orderResponse.getBody().asString());
@@ -145,23 +76,53 @@ public class OrderTests {
     @Test
     @DisplayName("Создание заказа без ингредиентов")
     public void createOrderWithEmptyIngredients() {
-        Map<String, Object> body = new HashMap<>();
-        body.put("ingredients", new ArrayList<>());
+        OrderRequest orderRequest = new OrderRequest(Collections.emptyList());
 
         given()
                 .header("Authorization", "Bearer " + accessToken)
                 .header("Content-type", "application/json")
-                .body(body)
+                .body(orderRequest)
                 .when()
                 .post("/api/orders")
                 .then()
                 .statusCode(400)
                 .body("success", equalTo(false))
                 .body("message", equalTo("Ingredient ids must be provided"));
+    }
 
+    @Step("Создание заказа с авторизацией (POST /api/orders)")
+    public Response makeOrderWithAuth(String token, OrderRequest orderRequest) {
+        return given()
+                .header("Authorization", "Bearer " + token)
+                .header("Content-type", "application/json")
+                .body(orderRequest)
+                .when()
+                .post("/api/orders");
+    }
+
+    @Step("Создание заказа без авторизации (POST /api/orders)")
+    public Response makeOrderWithoutAuth(OrderRequest orderRequest) {
+        return given()
+                .header("Content-type", "application/json")
+                .body(orderRequest)
+                .when()
+                .post("/api/orders");
     }
 
 
+    public static class OrderRequest {
+        private List<String> ingredients;
 
+        public OrderRequest(List<String> ingredients) {
+            this.ingredients = ingredients;
+        }
+
+        public List<String> getIngredients() {
+            return ingredients;
+        }
+
+        public void setIngredients(List<String> ingredients) {
+            this.ingredients = ingredients;
+        }
+    }
 }
-
